@@ -1,87 +1,161 @@
-function doGet() {
-  return HtmlService.createTemplateFromFile('Index')
-      .evaluate()
-      .setTitle('주식 분석 대시보드')
-      .addMetaTag('viewport', 'width=device-width, initial-scale=1');
-}
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    .chart-container { position: relative; height: 300px; width: 100%; }
+  </style>
+</head>
+<body class="bg-gray-100 font-sans leading-normal tracking-normal">
 
-// 주식 코드 데이터를 가져와 수익률 및 MDD 계산
-function getStockData(ticker) {
-  try {
-    var today = new Date();
-    var oneYearAgo = new Date();
-    oneYearAgo.setFullYear(today.getFullYear() - 1);
-    
-    // 임시 시트를 만들어 GOOGLEFINANCE 데이터 호출
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var tempSheet = ss.insertSheet();
-    
-    // 한국 주식의 경우 코드가 숫자로만 되어 있으면 "KRX:005930" 형태로 입력해야 할 수 있습니다.
-    // 입력된 ticker가 숫자 6자리인 경우 KRX:를 자동으로 붙여줍니다.
-    if (/^\d{6}$/.test(ticker)) {
-      ticker = "KRX:" + ticker;
-    }
-    
-    var formula = '=GOOGLEFINANCE("' + ticker + '", "price", DATE(' + 
-                  oneYearAgo.getFullYear() + ',' + (oneYearAgo.getMonth()+1) + ',' + oneYearAgo.getDate() + '), DATE(' + 
-                  today.getFullYear() + ',' + (today.getMonth()+1) + ',' + today.getDate() + '), "DAILY")';
-    
-    tempSheet.getRange("A1").setFormula(formula);
-    SpreadsheetApp.flush(); // 수식 계산 대기
-    
-    var data = tempSheet.getDataRange().getValues();
-    ss.deleteSheet(tempSheet); // 임시 시트 삭제
-    
-    if (data.length <= 1 || data[0][0] === "Error") {
-      return { success: false, message: "주식 코드를 찾을 수 없거나 데이터가 없습니다." };
-    }
-    
-    var dates = [];
-    var prices = [];
-    var returns = [];
-    var mdds = [];
-    
-    var basePrice = data[1][1]; // 1년 전 첫 거래일 종가
-    var peak = -Infinity; // MDD 계산을 위한 최고점
-    
-    for (var i = 1; i < data.length; i++) {
-      var date = Utilities.formatDate(new Date(data[i][0]), Session.getScriptTimeZone(), "yyyy-MM-dd");
-      var price = data[i][1];
-      
-      if (!price) continue;
-      
-      // 1. 수익률 (%) 계산
-      var totalReturn = ((price - basePrice) / basePrice) * 100;
-      
-      // 2. MDD (%) 계산
-      if (price > peak) {
-        peak = price;
+  <div class="container mx-auto p-6 max-w-5xl">
+    <div class="bg-white p-6 rounded-lg shadow-md mb-6">
+      <h1 class="text-2xl font-bold text-gray-800 mb-4">📈 주식 분석 대시보드 (최근 1년)</h1>
+      <div class="flex flex-wrap gap-3 items-center">
+        <input type="text" id="tickerInput" placeholder="예: 005930 또는 AAPL" class="border border-gray-300 p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 w-64">
+        <button onclick="loadDashboard()" id="searchBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-md transition duration-200">조회하기</button>
+        <span id="loadingText" class="text-blue-600 font-medium hidden animate-pulse">데이터 분석 중...</span>
+      </div>
+    </div>
+
+    <div id="summaryCards" class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6 hidden">
+      <div class="bg-white p-6 rounded-lg shadow-md border-l-4 border-blue-500">
+        <p class="text-sm text-gray-500 uppercase font-bold">현재가 / 종가</p>
+        <p id="cardPrice" class="text-2xl font-semibold text-gray-800">0</p>
+      </div>
+      <div class="bg-white p-6 rounded-lg shadow-md border-l-4 border-green-500">
+        <p class="text-sm text-gray-500 uppercase font-bold">1년 누적 수익률</p>
+        <p id="cardReturn" class="text-2xl font-semibold text-gray-800">0%</p>
+      </div>
+      <div class="bg-white p-6 rounded-lg shadow-md border-l-4 border-red-500">
+        <p class="text-sm text-gray-500 uppercase font-bold">최대 낙폭 (MDD)</p>
+        <p id="cardMDD" class="text-2xl font-semibold text-gray-800">0%</p>
+      </div>
+    </div>
+
+    <div id="chartSection" class="grid grid-cols-1 md:grid-cols-2 gap-6 hidden">
+      <div class="bg-white p-4 rounded-lg shadow-md">
+        <h3 class="text-lg font-semibold text-gray-700 mb-2">누적 수익률 추이 (%)</h3>
+        <div class="chart-container">
+          <canvas id="returnChart"></canvas>
+        </div>
+      </div>
+      <div class="bg-white p-4 rounded-lg shadow-md">
+        <h3 class="text-lg font-semibold text-gray-700 mb-2">MDD (Maximum Drawdown) (%)</h3>
+        <div class="chart-container">
+          <canvas id="mddChart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let returnChartInstance = null;
+    let mddChartInstance = null;
+
+    function loadDashboard() {
+      const ticker = document.getElementById('tickerInput').value.trim();
+      if (!ticker) {
+        alert('주식 코드를 입력해주세요.');
+        return;
       }
-      var drawdown = ((price - peak) / peak) * 100;
-      
-      dates.push(date);
-      prices.push(price);
-      returns.push(totalReturn.toFixed(2));
-      mdds.push(drawdown.toFixed(2));
+
+      // UI 제어
+      document.getElementById('searchBtn').disabled = true;
+      document.getElementById('loadingText').classList.remove('hidden');
+
+      // 백엔드 Apps Script 함수 호출
+      google.script.run.withSuccessHandler(function(response) {
+        document.getElementById('searchBtn').disabled = false;
+        document.getElementById('loadingText').add('hidden');
+
+        if (!response.success) {
+          alert(response.message);
+          return;
+        }
+
+        // 요약 데이터 매핑
+        document.getElementById('summaryCards').classList.remove('hidden');
+        document.getElementById('chartSection').classList.remove('hidden');
+        
+        document.getElementById('cardPrice').innerText = response.currentPrice;
+        
+        const retEl = document.getElementById('cardReturn');
+        retEl.innerText = response.finalReturn + '%';
+        retEl.className = response.finalReturn >= 0 ? "text-2xl font-semibold text-red-500" : "text-2xl font-semibold text-blue-500";
+
+        document.getElementById('cardMDD').innerText = response.maxDrawdown + '%';
+
+        // 차트 그리기
+        renderCharts(response.dates, response.returns, response.mdds, response.ticker);
+
+      }).withFailureHandler(function(error) {
+        document.getElementById('searchBtn').disabled = false;
+        document.getElementById('loadingText').classList.add('hidden');
+        alert('서버 통신 오류가 발생했습니다: ' + error);
+      }).getStockData(ticker);
     }
-    
-    // 대시보드 상단 요약용 데이터
-    var currentPrice = prices[prices.length - 1];
-    var finalReturn = returns[returns.length - 1];
-    var maxDrawdown = Math.min.apply(null, mdds);
-    
-    return {
-      success: true,
-      ticker: ticker.toUpperCase(),
-      currentPrice: currentPrice.toLocaleString(),
-      finalReturn: finalReturn,
-      maxDrawdown: maxDrawdown.toFixed(2),
-      dates: dates,
-      returns: returns,
-      mdds: mdds
-    };
-    
-  } catch (error) {
-    return { success: false, message: error.toString() };
-  }
-}
+
+    function renderCharts(labels, returnData, mddData, ticker) {
+      // 기존 차트가 존재하면 파괴(초기화 필수)
+      if (returnChartInstance) returnChartInstance.destroy();
+      if (mddChartInstance) mddChartInstance.destroy();
+
+      // 1. 수익률 차트
+      const ctxReturn = document.getElementById('returnChart').getContext('2d');
+      returnChartInstance = new Chart(ctxReturn, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: `${ticker} 수익률 (%)`,
+            data: returnData,
+            borderColor: '#10B981',
+            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+            fill: true,
+            borderWidth: 2,
+            pointRadius: 0
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            y: { ticks: { callback: value => value + '%' } }
+          }
+        }
+      });
+
+      // 2. MDD 차트
+      const ctxMdd = document.getElementById('mddChart').getContext('2d');
+      mddChartInstance = new Chart(ctxMdd, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: `${ticker} MDD (%)`,
+            data: mddData,
+            borderColor: '#EF4444',
+            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+            fill: true,
+            borderWidth: 2,
+            pointRadius: 0
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            y: { 
+              max: 0, // MDD는 항상 0 이하입니다.
+              ticks: { callback: value => value + '%' } 
+            }
+          }
+        }
+      });
+    }
+  </script>
+</body>
+</html>
