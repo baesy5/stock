@@ -1,7 +1,9 @@
 <!DOCTYPE html>
-<html>
+<html lang="ko">
 <head>
-  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>주식 분석 대시보드</title>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
@@ -52,6 +54,9 @@
   </div>
 
   <script>
+    // ⚠️ 여기에 구글 앱스 크립트 '배포' 후 생성된 웹 앱 URL(exec로 끝나는 주소)을 붙여넣으세요.
+    const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzHZ1n5Da6DSiKD11enIUZd10ArNB_sNS1MB35EctOItHkfSu0w4pySXuzMM8jEhdSa/exec";
+
     let returnChartInstance = null;
     let mddChartInstance = null;
 
@@ -62,44 +67,52 @@
         return;
       }
 
+      if (WEB_APP_URL.includes("XXXXX")) {
+        alert('WEB_APP_URL 변수에 본인의 구글 앱스 크립트 웹 앱 주소를 먼저 설정해주세요!');
+        return;
+      }
+
       // UI 제어
       document.getElementById('searchBtn').disabled = true;
       document.getElementById('loadingText').classList.remove('hidden');
 
-      // 백엔드 Apps Script 함수 호출
-      google.script.run.withSuccessHandler(function(response) {
-        document.getElementById('searchBtn').disabled = false;
-        document.getElementById('loadingText').add('hidden');
+      // 외부 웹사이트 방식으로 구글 Apps Script API 호출 (CORS/Redirect 대응)
+      const targetUrl = `${WEB_APP_URL}?ticker=${encodeURIComponent(ticker)}`;
 
-        if (!response.success) {
-          alert(response.message);
-          return;
-        }
+      fetch(targetUrl)
+        .then(response => response.json())
+        .then(response => {
+          document.getElementById('searchBtn').disabled = false;
+          document.getElementById('loadingText').classList.add('hidden');
 
-        // 요약 데이터 매핑
-        document.getElementById('summaryCards').classList.remove('hidden');
-        document.getElementById('chartSection').classList.remove('hidden');
-        
-        document.getElementById('cardPrice').innerText = response.currentPrice;
-        
-        const retEl = document.getElementById('cardReturn');
-        retEl.innerText = response.finalReturn + '%';
-        retEl.className = response.finalReturn >= 0 ? "text-2xl font-semibold text-red-500" : "text-2xl font-semibold text-blue-500";
+          if (!response.success) {
+            alert(response.message);
+            return;
+          }
 
-        document.getElementById('cardMDD').innerText = response.maxDrawdown + '%';
+          // 요약 데이터 매핑
+          document.getElementById('summaryCards').classList.remove('hidden');
+          document.getElementById('chartSection').classList.remove('hidden');
+          
+          document.getElementById('cardPrice').innerText = response.currentPrice;
+          
+          const retEl = document.getElementById('cardReturn');
+          retEl.innerText = response.finalReturn + '%';
+          retEl.className = response.finalReturn >= 0 ? "text-2xl font-semibold text-red-500" : "text-2xl font-semibold text-blue-500";
 
-        // 차트 그리기
-        renderCharts(response.dates, response.returns, response.mdds, response.ticker);
+          document.getElementById('cardMDD').innerText = response.maxDrawdown + '%';
 
-      }).withFailureHandler(function(error) {
-        document.getElementById('searchBtn').disabled = false;
-        document.getElementById('loadingText').classList.add('hidden');
-        alert('서버 통신 오류가 발생했습니다: ' + error);
-      }).getStockData(ticker);
+          // 차트 그리기
+          renderCharts(response.dates, response.returns, response.mdds, response.ticker);
+        })
+        .catch(error => {
+          document.getElementById('searchBtn').disabled = false;
+          document.getElementById('loadingText').classList.add('hidden');
+          alert('서버 통신 중 오류가 발생했습니다: ' + error);
+        });
     }
 
     function renderCharts(labels, returnData, mddData, ticker) {
-      // 기존 차트가 존재하면 파괴(초기화 필수)
       if (returnChartInstance) returnChartInstance.destroy();
       if (mddChartInstance) mddChartInstance.destroy();
 
@@ -149,7 +162,7 @@
           maintainAspectRatio: false,
           scales: {
             y: { 
-              max: 0, // MDD는 항상 0 이하입니다.
+              max: 0, 
               ticks: { callback: value => value + '%' } 
             }
           }
