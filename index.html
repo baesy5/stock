@@ -13,6 +13,22 @@
 <body class="bg-gray-100 font-sans leading-normal tracking-normal">
 
   <div class="container mx-auto p-6 max-w-5xl">
+    
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+      <div class="bg-gradient-to-br from-indigo-500 to-purple-600 p-5 rounded-lg shadow-md text-white">
+        <p class="text-xs uppercase font-bold text-indigo-200">💵 원/달러 환율</p>
+        <p id="macroUSDKRW" class="text-2xl font-bold mt-1">로딩 중...</p>
+      </div>
+      <div class="bg-gradient-to-br from-yellow-500 to-amber-600 p-5 rounded-lg shadow-md text-white">
+        <p class="text-xs uppercase font-bold text-yellow-200">✨ 국제 금 선물 (GCW00)</p>
+        <p id="macroGold" class="text-2xl font-bold mt-1">로딩 중...</p>
+      </div>
+      <div class="bg-gradient-to-br from-red-500 to-orange-600 p-5 rounded-lg shadow-md text-white">
+        <p class="text-xs uppercase font-bold text-red-200">🪵 국제 구리 선물 (HGW00)</p>
+        <p id="macroCopper" class="text-2xl font-bold mt-1">로딩 중...</p>
+      </div>
+    </div>
+
     <div class="bg-white p-6 rounded-lg shadow-md mb-6">
       <h1 class="text-2xl font-bold text-gray-800 mb-4">📈 주식 분석 대시보드 (최근 1년)</h1>
       <div class="flex flex-wrap gap-3 items-center">
@@ -59,6 +75,32 @@
 
     let returnChartInstance = null;
     let mddChartInstance = null;
+
+    // 🌟 [추가된 부분] 페이지 로드 시 원달러, 금, 구리 가격 자동 조회
+    window.addEventListener('DOMContentLoaded', () => {
+      if (!WEB_APP_URL.includes("XXXXX")) {
+        fetchMacroIndicators("USDKRW", "macroUSDKRW", "원");
+        fetchMacroIndicators("COMEX:GCW00", "macroGold", "$");
+        fetchMacroIndicators("COMEX:HGW00", "macroCopper", "$");
+      }
+    });
+
+    // 매크로 경제 지표 전용 비동기 fetch 함수
+    function fetchMacroIndicators(ticker, elementId, unit) {
+      const url = `${WEB_APP_URL}?ticker=${encodeURIComponent(ticker)}`;
+      fetch(url)
+        .then(res => res.json())
+        .then(data => {
+          if(data.success) {
+            document.getElementById(elementId).innerText = unit === "원" ? `${data.currentPrice} ${unit}` : `${unit} ${data.currentPrice}`;
+          } else {
+            document.getElementById(elementId).innerText = "불러오기 실패";
+          }
+        })
+        .catch(() => {
+          document.getElementById(elementId).innerText = "네트워크 에러";
+        });
+    }
 
     function loadDashboard() {
       const ticker = document.getElementById('tickerInput').value.trim();
