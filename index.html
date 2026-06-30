@@ -1,0 +1,87 @@
+function doGet() {
+  return HtmlService.createTemplateFromFile('Index')
+      .evaluate()
+      .setTitle('주식 분석 대시보드')
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+// 주식 코드 데이터를 가져와 수익률 및 MDD 계산
+function getStockData(ticker) {
+  try {
+    var today = new Date();
+    var oneYearAgo = new Date();
+    oneYearAgo.setFullYear(today.getFullYear() - 1);
+    
+    // 임시 시트를 만들어 GOOGLEFINANCE 데이터 호출
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var tempSheet = ss.insertSheet();
+    
+    // 한국 주식의 경우 코드가 숫자로만 되어 있으면 "KRX:005930" 형태로 입력해야 할 수 있습니다.
+    // 입력된 ticker가 숫자 6자리인 경우 KRX:를 자동으로 붙여줍니다.
+    if (/^\d{6}$/.test(ticker)) {
+      ticker = "KRX:" + ticker;
+    }
+    
+    var formula = '=GOOGLEFINANCE("' + ticker + '", "price", DATE(' + 
+                  oneYearAgo.getFullYear() + ',' + (oneYearAgo.getMonth()+1) + ',' + oneYearAgo.getDate() + '), DATE(' + 
+                  today.getFullYear() + ',' + (today.getMonth()+1) + ',' + today.getDate() + '), "DAILY")';
+    
+    tempSheet.getRange("A1").setFormula(formula);
+    SpreadsheetApp.flush(); // 수식 계산 대기
+    
+    var data = tempSheet.getDataRange().getValues();
+    ss.deleteSheet(tempSheet); // 임시 시트 삭제
+    
+    if (data.length <= 1 || data[0][0] === "Error") {
+      return { success: false, message: "주식 코드를 찾을 수 없거나 데이터가 없습니다." };
+    }
+    
+    var dates = [];
+    var prices = [];
+    var returns = [];
+    var mdds = [];
+    
+    var basePrice = data[1][1]; // 1년 전 첫 거래일 종가
+    var peak = -Infinity; // MDD 계산을 위한 최고점
+    
+    for (var i = 1; i < data.length; i++) {
+      var date = Utilities.formatDate(new Date(data[i][0]), Session.getScriptTimeZone(), "yyyy-MM-dd");
+      var price = data[i][1];
+      
+      if (!price) continue;
+      
+      // 1. 수익률 (%) 계산
+      var totalReturn = ((price - basePrice) / basePrice) * 100;
+      
+      // 2. MDD (%) 계산
+      if (price > peak) {
+        peak = price;
+      }
+      var drawdown = ((price - peak) / peak) * 100;
+      
+      dates.push(date);
+      prices.push(price);
+      returns.push(totalReturn.toFixed(2));
+      mdds.push(drawdown.toFixed(2));
+    }
+    
+    // 대시보드 상단 요약용 데이터
+    var currentPrice = prices[prices.length - 1];
+    var finalReturn = returns[returns.length - 1];
+    var maxDrawdown = Math.min.apply(null, mdds);
+    
+    return {
+      success: true,
+      ticker: ticker.toUpperCase(),
+      currentPrice: currentPrice.toLocaleString(),
+      finalReturn: finalReturn,
+      maxDrawdown: maxDrawdown.toFixed(2),
+      dates: dates,
+      returns: returns,
+      mdds: mdds
+    };
+    
+  } catch (error) {
+    return { success: false, message: error.toString() };
+  }
+}
